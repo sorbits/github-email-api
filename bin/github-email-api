@@ -1,0 +1,188 @@
+#!/usr/bin/env ruby
+
+ENV['BUNDLE_GEMFILE'] = File.expand_path('../Gemfile', File.dirname(__FILE__))
+
+require 'rubygems'
+require 'bundler/setup'
+require 'base64'
+require 'github_api'
+require 'mail'
+require 'yaml'
+require 'tempfile'
+require 'pp'
+
+# curl -snd '{"scopes":["repo"],"note":"GitHub Email Filter"}' https://api.github.com/authorizations
+
+def log(msg)
+  if path = $config.log_file
+    Dir.mkdir(File.dirname(path)) unless File.exists?(File.dirname(path))
+    open(path, "a") { |io| io << Time.now.getutc.strftime("%Y-%m-%d %H:%M:%S ") << msg.rstrip << "\n" }
+  end
+end
+
+class Settings
+  def setup
+    if @options.nil?
+      @options = Hash.new
+      config_dirs = "#{ENV['XDG_CONFIG_DIRS'] || '/etc/xdg'}:#{ENV['XDG_CONFIG_HOME'] || File.expand_path('~/.config')}"
+      config_dirs.split(':').each do |dir|
+        path = File.join(dir, 'github-email-api')
+        next unless File.exists?(path)
+        @options.merge!(YAML::load(File.open(path)))
+      end
+    end
+  end
+
+  def log_file
+    if res = self['log_file']
+      return File.expand_path(res)
+    end
+    nil
+  end
+
+  def oauth_token
+    self['oauth_token']
+  end
+
+  def email_user
+    self['email'].split('@').first
+  end
+
+  def email_domain
+    self['email'].split('@').last
+  end
+
+  def [](key)
+    setup
+    @options[key]
+  end
+end
+
+class GitHubIssue
+  attr_accessor :title, :state, :assignee
+
+  def initialize(user, repo, number)
+    @user, @repo, @number = user, repo, number
+    @add_labels    = []
+    @remove_labels = []
+  end
+
+  def add_label(label)
+    @add_labels << label
+  end
+
+  def remove_label(label)
+    @remove_labels << label
+  end
+
+  def commit
+    options = { }
+
+    options[:title]    = @title    unless @title.nil?
+    options[:assignee] = @assignee unless @assignee.nil?
+    options[:state]    = @state    unless @state.nil?
+
+    github = Github.new(:oauth_token => $config.oauth_token)
+
+    unless @add_labels.empty? && @remove_labels.empty?
+      issue      = github.issues.get(@user, @repo, @number)
+      old_labels = issue.labels.map { |label| label['name'] }.sort
+      labels     = (old_labels + @add_labels - @remove_labels).sort.uniq
+
+      if labels != old_labels
+        options[:labels] = labels
+      end
+    end
+
+    unless options.empty?
+      log("#{@user}/#{@repo}##{@number} → #{options.inspect}")
+      github.issues.edit(@user, @repo, @number, options)
+    end
+  end
+end
+
+def handle_notification(mail)
+  mail.reply_to = ["#{$config.email_user}+#{Base64.encode64(mail.reply_to.first).gsub(/\n/, '')}@#{$config.email_domain}"]
+  STDOUT << mail.to_s
+end
+
+def empty_reply?(body)
+  if body =~ /^.+:(\r?\n)+>/ # Discard everything below variations of ‘On some date, someone wrote:’
+    $`.strip.empty?
+  else
+    body.strip.empty?
+  end
+end
+
+def resend_filtered_reply(mail, old_reply_to)
+  body = mail.multipart? ? mail.find_first_mime_type('text/plain').body.decoded : mail.body.decoded
+  body.gsub!(/^(state|assignee|title|labels?):.*(\r?\n)*/, '')
+
+  unless empty_reply?(body)
+    mail.to = old_reply_to
+    mail.cc = nil
+
+    if mail.multipart?
+      mail.text_part = body
+    else
+      mail.body = body
+    end
+
+    log("deliver ‘#{mail.subject}’")
+    mail.deliver
+  end
+end
+
+def handle_issue_actions(mail)
+  if mail.in_reply_to =~ %r{\A(.+?)/(.+?)/(?:issues|pull)/(\d+)(/.+)?@github.com\z}
+    user, repository, number = $1, $2, $3
+    issue = GitHubIssue.new(user, repository, number)
+
+    body = mail.multipart? ? mail.find_first_mime_type('text/plain').body.decoded : mail.body.decoded
+    body.split(/\r?\n/).each do |line|
+      case line
+        when /^state:\s*(open|closed)/ then issue.state    = $1
+        when /^assignee:\s*(.*)/       then issue.assignee = $1.strip
+        when /^title:\s*(.+)/          then issue.title    = $1.strip
+
+        when /^labels?:\s*(.*)/ then
+          labels = $1.strip.split(',')
+          labels.each do |label|
+            if label.strip =~ /\A-(.+)/
+              issue.remove_label($1)
+            elsif label.strip =~ /\A\+?(.+)/
+              issue.add_label($1)
+            end
+          end
+      end
+    end
+
+    issue.commit
+  else
+    raise Exception.new("missing in-reply-to (issue) information.")
+  end
+end
+
+if __FILE__ == $PROGRAM_NAME
+  begin
+    $config = Settings.new
+
+    Mail.defaults do
+      delivery_method :smtp, :enable_starttls_auto => false
+    end
+
+    mail = Mail.read_from_string(STDIN.read)
+
+    if mail.from.find { |addr| addr == 'notifications@github.com' }
+      handle_notification(mail)
+    elsif mail.to.find { |addr| addr =~ /\A#{Regexp.escape($config.email_user)}\+(.+)@#{Regexp.escape($config.email_domain)}\z/i }
+      resend_filtered_reply(mail.dup, Base64.decode64($1))
+      handle_issue_actions(mail)
+    else
+      raise Exception.new("email is neither from GitHub or a reply.")
+    end
+  rescue Exception => e
+    log("#{e.message.chomp}\n#{e.backtrace.join("\n")}")
+    exit 1
+  end
+end
