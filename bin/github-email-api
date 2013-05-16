@@ -116,7 +116,8 @@ end
 
 def resend_filtered_reply(mail, old_reply_to)
   body = mail.multipart? ? mail.find_first_mime_type('text/plain').body.decoded : mail.body.decoded
-  body.gsub!(/^(state|assignee|title|labels?):.*(\r?\n)*/, '')
+  body.gsub!(/\r(?=\n)/, '')
+  body.gsub!(/^(state|assignee|title|labels?):.*\n*/, '')
 
   unless empty_reply?(body)
     mail.to = old_reply_to
