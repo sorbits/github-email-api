@@ -115,19 +115,17 @@ def empty_reply?(body)
 end
 
 def resend_filtered_reply(mail, old_reply_to)
-  body = mail.multipart? ? mail.find_first_mime_type('text/plain').body.decoded : mail.body.decoded
-  body.gsub!(/\r(?=\n)/, '')
+  part = mail.multipart? ? mail.find_first_mime_type('text/plain') : mail
+  body = part.body.decoded.gsub(/\r(?=\n)/, '')
   body.gsub!(/^(state|assignee|title|labels?):.*\n*/, '')
 
   unless empty_reply?(body)
+    mail.content_transfer_encoding = nil
     mail.to = old_reply_to
     mail.cc = nil
 
-    if mail.multipart?
-      mail.text_part = body
-    else
-      mail.body = body
-    end
+    part.content_transfer_encoding = nil
+    part.body = body
 
     log("deliver ‘#{mail.subject}’")
     mail.deliver
