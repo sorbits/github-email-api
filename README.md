@@ -77,3 +77,7 @@ If you use a label name that doesn’t already exist, it will be created.
 * Issues closed via email generally show “you closed this issue…” before the reply (presumably stating the reason) since the reply is added via (GitHub’s own) email API which has a noticeable delay.
 
 * Setting up the GitHub email API is probably too complex for most users.
+
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/sorbits/github-email-api/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
