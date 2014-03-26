@@ -21,6 +21,10 @@ def log(msg)
 end
 
 class Settings
+  def initialize
+    @options = nil
+  end
+
   def setup
     if @options.nil?
       @options = Hash.new
