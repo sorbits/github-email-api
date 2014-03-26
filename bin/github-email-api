@@ -111,7 +111,7 @@ def handle_notification(mail)
 end
 
 def empty_reply?(body)
-  if body =~ /^.+:(\r?\n)+>/ # Discard everything below variations of ‘On some date, someone wrote:’
+  if body =~ /^On\s.+\swrote:(\r?\n)+>/ # Discard everything below variations of ‘On some date, someone wrote:’
     $`.strip.empty?
   else
     body.strip.empty?
