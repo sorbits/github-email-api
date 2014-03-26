@@ -133,6 +133,8 @@ def resend_filtered_reply(mail, old_reply_to)
 
     log("deliver ‘#{mail.subject}’")
     mail.deliver
+  else
+    log("empty body for ‘#{mail.subject}’")
   end
 end
 
