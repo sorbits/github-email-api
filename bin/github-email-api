@@ -121,7 +121,7 @@ end
 def resend_filtered_reply(mail, old_reply_to)
   part = mail.multipart? ? mail.find_first_mime_type('text/plain') : mail
   body = part.body.decoded.gsub(/\r(?=\n)/, '')
-  body.gsub!(/^(state|assignee|title|labels?):.*\n*/, '')
+  body.gsub!(/^(stat(e|us)|assign(ee)?|title|labels?):.*\n*/, '')
 
   unless empty_reply?(body)
     mail.content_transfer_encoding = nil
@@ -146,9 +146,9 @@ def handle_issue_actions(mail)
     body = mail.multipart? ? mail.find_first_mime_type('text/plain').body.decoded : mail.body.decoded
     body.split(/\r?\n/).each do |line|
       case line
-        when /^state:\s*(open|closed)/ then issue.state    = $1
-        when /^assignee:\s*(.*)/       then issue.assignee = $1.strip
-        when /^title:\s*(.+)/          then issue.title    = $1.strip
+        when /^stat(?:e|us):\s*(open|closed?)/ then issue.state    = $1
+        when /^assign(?:ee)?:\s*(.*)/          then issue.assignee = $1.strip
+        when /^title:\s*(.+)/                  then issue.title    = $1.strip
 
         when /^labels?:\s*(.*)/ then
           labels = $1.strip.split(',')
